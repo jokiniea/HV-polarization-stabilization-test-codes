@@ -10,12 +10,13 @@ tagger.setInputDelay(1, 0)
 tagger.setInputDelay(2, 0)
 
 # 1000 ns binit
+calc_time = 0.2
 counter = TimeTagger.Counter(tagger=tagger,
     channels=[1, 2],  # H, V
-    binwidth=int(1e10),
-    n_values=int(1e4)
+    binwidth=int(1e9),
+    n_values=int(1e5)
 )
-sleep(100)
+sleep(10)
 # Hae data
 data = counter.getData()
 
@@ -47,7 +48,7 @@ output = np.column_stack([
 ])
 
 np.savetxt(
-    "HV_modulator_polarization_stability_3.csv",
+    "HV_modulator_polarization_stability_1e7.csv",
     output,
     delimiter=",",
     header="time_s,H,V,H_over_HplusV,V_over_HplusV,S1",
