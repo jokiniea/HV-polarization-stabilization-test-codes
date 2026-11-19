@@ -1,8 +1,37 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from itertools import product
+
+t_FPGA_ps = 62500
+t_detector_ps = 1e9
+t_sweep_ps = 1e10
+N_H = 7
+N_V = 7
+test_repetitions = 10
+test_time = 1e10
+test_n_data = int(2 * test_repetitions * test_time / t_detector_ps)
+
+if min(t_FPGA_ps, t_detector_ps, t_sweep_ps, N_H, N_V) <= 0:
+    raise ValueError("Aika-asetusten ja pyyhkäisypisteiden on oltava positiivisia")
+
+fpga_samples_per_segment = t_sweep_ps / t_FPGA_ps
+detector_bins_per_segment = t_sweep_ps / t_detector_ps
+if not float(fpga_samples_per_segment).is_integer():
+    raise ValueError("t_sweep_ps täytyy olla t_FPGA_ps:n kokonaislukukerrannainen")
+if not float(detector_bins_per_segment).is_integer():
+    raise ValueError("t_sweep_ps täytyy olla t_detector_ps:n kokonaislukukerrannainen")
+
+fpga_samples_per_segment = int(fpga_samples_per_segment)
+detector_bins_per_segment = int(detector_bins_per_segment)
+segment_count = N_H * N_V
+segment_duration_s = t_sweep_ps * 1e-12
+detector_bin_s = t_detector_ps * 1e-12
+trigger_num = int(700/1e9*t_detector_ps)
+
 
 def plot_segment_series(ax, x, y, label, text_y):
+
     valid = np.isfinite(x) & np.isfinite(y)
     x = x[valid]
     y = y[valid]
@@ -26,18 +55,18 @@ def plot_segment_series(ax, x, y, label, text_y):
         transform=ax.transAxes,
     )
 
-def extract_triggered(data, n_data, binwidth_ps, trig_row=3, offset=0):
+def extract_triggered(data, n_data, binwidth_ps, trig_row=2):
     """
     Palauttaa H, V ja ikkunan indeksit.
     data: Counterin data, muoto [kanava, bini], viimeinen rivi on triggerikanava
     n_data: odotettu datapisteiden määrä triggerin jälkeen
     offset: montako binia triggerin bini(n) jälkeen data alkaa (0 = samasta binistä)
     """
-    if not np.any(data[trig_row] > 700):
+    if not np.any(data[trig_row] > trigger_num):
         raise RuntimeError("Kanavalla 8 ei havaittu liipaisua")
 
-    trig_idx = int(np.argmax(data[trig_row] > 700))
-    first_idx = trig_idx + offset
+    trig_idx = int(np.argmax(data[trig_row] > trigger_num))
+    first_idx = trig_idx
     last_idx = first_idx + n_data - 1          # viimeinen dataan kuuluva bini (mukaan lukien)
 
     if last_idx >= data.shape[1]:
@@ -66,10 +95,6 @@ with sweep_path.open(encoding="utf-8") as csv_file:
     columns = csv_file.readline().strip().split(",")
 
 data = np.loadtxt(sweep_path, delimiter=",", skiprows=1)
-delta_t_FPGA = 62500
-delta_t_detecor = 1e9
-delta_sweep_mittaus = 2e11
-resolution = 1000
 
 output_dir = Path(__file__).with_name("segment_plots")
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -86,8 +111,8 @@ raw_hv_sum = raw_channel_1 + raw_channel_2
 raw_hv_sum[raw_hv_sum == 0] = np.nan
 
 fig, ax = plt.subplots(figsize=(12, 6))
-ax.plot(raw_t, raw_channel_1 / raw_hv_sum, label=f"H normalized")
-ax.plot(raw_t, raw_channel_2 / raw_hv_sum, label=f"V normalized")
+ax.plot(raw_t, raw_channel_1 / raw_hv_sum, "-", label=f"H normalized")
+ax.plot(raw_t, raw_channel_2 / raw_hv_sum, "-", label=f"V normalized")
 ax.set_xlabel("Time (s)")
 ax.set_ylabel("Normalized counts")
 ax.set_title("Raw stabilization data")
@@ -122,8 +147,8 @@ full_H_norm = full_H / full_hv_sum
 full_V_norm = full_V / full_hv_sum
 
 fig, ax = plt.subplots(figsize=(12, 5))
-ax.plot(sweep_t, full_H_norm, label="H/(H+V)")
-ax.plot(sweep_t, full_V_norm, label="V/(H+V)")
+ax.plot(sweep_t, full_H_norm,"-", label="H/(H+V)",markersize=4)
+ax.plot(sweep_t, full_V_norm,"-", label="V/(H+V)",markersize=4)
 ax.set_xlabel("Time (s)")
 ax.set_ylabel("Normalized value")
 ax.set_title("Normalized polarization: full measurement")
@@ -148,22 +173,27 @@ plt.show(block=True)
 fig.savefig(output_dir / "full_data_normalized.png", dpi=150)
 plt.close(fig)
 
+sweep_values_h = np.linspace(-12000, 12000, N_H, dtype=np.int16)
+sweep_values_v = np.linspace(-12000, 12000, N_V, dtype=np.int16)
+sweep_values = list(product(sweep_values_h, sweep_values_v))
+n_data = segment_count * detector_bins_per_segment
+
 channel_data = np.vstack((full_H, full_V, trigger_counts))
 H, V, first_idx, last_idx = extract_triggered(
-    channel_data, 5000, int(delta_t_detecor), trig_row=2)
+    channel_data, n_data, t_detector_ps
+)
 hv_sum = H + V
 hv_sum[hv_sum == 0] = np.nan
 H_norm = H / hv_sum
 V_norm = V / hv_sum
-t = sweep_t[first_idx:last_idx + 1]
+t = sweep_t[first_idx:last_idx + 1] - sweep_t[first_idx]
 
-idx = int(delta_sweep_mittaus / delta_t_detecor)
-sweep_values = np.arange(-12000, 13000, resolution)
+if len(sweep_values) != segment_count:
+    raise RuntimeError("Sweep-arvojen määrä ei vastaa N_H * N_V -arvoa")
 
-segment_count = (len(t) + idx - 1) // idx
 for i in range(segment_count):
-    start = i * idx
-    stop = min(start + idx, len(t))
+    start = i * detector_bins_per_segment
+    stop = start + detector_bins_per_segment
     segment_time = t[start:stop]
     H_segment = H[start:stop]
     V_segment = V[start:stop]
@@ -193,12 +223,23 @@ for i in range(segment_count):
     axes[2].set_title("Total counts")
     axes[2].legend(loc="best")
     axes[2].grid(True)
+    axes[2].set_xlim(i * segment_duration_s, (i + 1) * segment_duration_s)
 
     fig.suptitle(f"Segment {i + 1}/{segment_count}, sym: {sweep_values[i]}")
     fig.tight_layout()
     fig.savefig(output_dir / f"segment_{i + 1:03d}.png", dpi=150)
     plt.close(fig)
 
+for old_plot in output_dir.glob("segment_*.png"):
+    segment_number = old_plot.stem.partition("_")[2]
+    if segment_number.isdigit() and int(segment_number) > segment_count:
+        old_plot.unlink()
+
+print(
+    f"Segmentin kesto: {segment_duration_s:g} s "
+    f"({detector_bins_per_segment} detector-biniä, "
+    f"{fpga_samples_per_segment} FPGA-näytettä)"
+)
 print(f"Saved {segment_count} segment plots to {output_dir}")
 
 data = np.loadtxt(
@@ -207,10 +248,10 @@ data = np.loadtxt(
     skiprows=1
 )
 
-n_data = 100
+n_data = test_n_data
 channel_data = data[:, 1:4].T
 H, V, first_idx, last_idx = extract_triggered(
-    channel_data, n_data, int(1e9), trig_row=2
+    channel_data, n_data, t_detector_ps, trig_row=2
 )
 t = data[first_idx:last_idx + 1, 0]
 hv_sum = H + V
@@ -219,11 +260,11 @@ H_norm = H / hv_sum
 V_norm = V / hv_sum
 
 fig, ax = plt.subplots(figsize=(10, 5))
-ax.plot(t, H_norm, label="H")
-ax.plot(t, V_norm, label="V")
+ax.plot(t, H_norm, ".", label="H", markersize=4)
+ax.plot(t, V_norm, ".", label="V", markersize=4)
 
-for line_time in np.arange(t[0], t[-1], 0.001):
-    ax.axvline(line_time, color="gray", linewidth=0.5, alpha=0.5)
+for line_time in np.arange(t[0], t[-1], detector_bin_s):
+    ax.axvline(line_time, color="gray", linewidth=0.2, alpha=0.5)
 
 ax.set_xlabel("Time (s)")
 ax.set_ylabel("Counts")
