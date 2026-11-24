@@ -12,10 +12,10 @@ Muunneltavat vakiot
 """
 t_FPGA_ps = 62500
 t_detector_ps = 1e9
-t_sweep_ps = 1e10
-N_H = 7
-N_V = 7
-test_repetitions = 10
+t_sweep_ps = 10e9
+N_H = 9
+N_V = 9
+test_repetitions = 20
 test_time = 1e10
 
 channel_H = 7

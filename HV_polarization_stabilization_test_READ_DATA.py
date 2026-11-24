@@ -5,10 +5,10 @@ from itertools import product
 
 t_FPGA_ps = 62500
 t_detector_ps = 1e9
-t_sweep_ps = 1e10
-N_H = 7
-N_V = 7
-test_repetitions = 10
+t_sweep_ps = 2e9
+N_H = 9
+N_V = 9
+test_repetitions = 20
 test_time = 1e10
 test_n_data = int(2 * test_repetitions * test_time / t_detector_ps)
 
